@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#064e3b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <title>Fidget Spinner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+    body {
+      background: var(--bg, linear-gradient(135deg, #0f172a 0%, #064e3b 50%, #0f172a 100%));
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: white; gap: 0.75rem;
+    }
+    .top-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; padding: 0 1rem; }
+    .chip {
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.7); border-radius: 999px; padding: 0.35rem 0.8rem;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.15s;
+    }
+    .chip.active { background: var(--accent-dim, rgba(16,185,129,0.25)); border-color: var(--accent, #10b981); color: white; }
+    .speed-display { text-align: center; }
+    .speed-title { color: rgba(255,255,255,0.5); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; }
+    .speed-label { font-size: 1.75rem; font-weight: bold; color: #64748b; transition: color 0.2s, text-shadow 0.2s; }
+    .speed-label.slow { color: var(--accent-light, #34d399); }
+    .speed-label.fast { color: var(--accent, #10b981); text-shadow: 0 0 20px var(--accent-glow, rgba(16,185,129,0.5)); }
+    .rpm { color: rgba(255,255,255,0.4); font-size: 0.7rem; }
+    .spinner-container { position: relative; width: 270px; height: 270px; cursor: grab; }
+    .spinner-container:active { cursor: grabbing; }
+    .glow { position: absolute; inset: 0; border-radius: 50%; transform: scale(1.5); pointer-events: none; }
+    .spinner-svg { width: 100%; height: 100%; pointer-events: none; }
+    .stats { display: flex; gap: 2rem; text-align: center; }
+    .stat-label { color: rgba(255,255,255,0.4); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; }
+    .stat-value { font-size: 1.15rem; font-family: ui-monospace, monospace; color: var(--accent-light, #6ee7b7); }
+    .instructions { color: rgba(255,255,255,0.3); font-size: 0.8rem; text-align: center; padding: 0 1.5rem; }
+    .haptic-status { position: fixed; bottom: 0.5rem; left: 50%; transform: translateX(-50%); font-size: 0.65rem; color: rgba(255,255,255,0.25); }
+  </style>
+</head>
+<body>
+  <div class="top-bar" id="modeBar">
+    <button class="chip active" data-mode="scroll">📱 Scroll spin</button>
+    <button class="chip" data-mode="circle">🌀 Circle spin</button>
+    <button class="chip" id="soundChip">🔇 Sound</button>
+  </div>
+  <div class="top-bar" id="shapeBar">
+    <button class="chip" data-arms="2">2-arm</button>
+    <button class="chip active" data-arms="3">3-arm</button>
+    <button class="chip" data-arms="4">4-arm</button>
+  </div>
+  <div class="top-bar" id="themeBar">
+    <button class="chip active" data-theme="emerald">Emerald</button>
+    <button class="chip" data-theme="purple">Amethyst</button>
+    <button class="chip" data-theme="crimson">Crimson</button>
+    <button class="chip" data-theme="sapphire">Sapphire</button>
+  </div>
+
+  <div class="speed-display">
+    <div class="speed-title">Speed</div>
+    <div class="speed-label" id="speedLabel">Stopped</div>
+    <div class="rpm" id="rpm">0 RPM</div>
+  </div>
+
+  <div class="spinner-container" id="spinnerContainer">
+    <div class="glow" id="glow"></div>
+    <svg class="spinner-svg" id="spinner" viewBox="-100 -100 200 200">
+      <defs>
+        <radialGradient id="armG" cx="30%" cy="30%">
+          <stop id="armS1" offset="0%" stop-color="#34d399" />
+          <stop id="armS2" offset="100%" stop-color="#047857" />
+        </radialGradient>
+        <radialGradient id="bearingG" cx="30%" cy="30%">
+          <stop id="brgS1" offset="0%" stop-color="#6ee7b7" />
+          <stop id="brgS2" offset="100%" stop-color="#059669" />
+        </radialGradient>
+        <radialGradient id="centerG" cx="30%" cy="30%">
+          <stop id="ctrS1" offset="0%" stop-color="#10b981" />
+          <stop id="ctrS2" offset="100%" stop-color="#047857" />
+        </radialGradient>
+        <radialGradient id="innerG" cx="30%" cy="30%">
+          <stop offset="0%" stop-color="#94a3b8" />
+          <stop offset="100%" stop-color="#475569" />
+        </radialGradient>
+      </defs>
+      <g id="spinnerGroup"></g>
+    </svg>
+  </div>
+
+  <div class="stats">
+    <div><div class="stat-label">Spins</div><div class="stat-value" id="spinCount">0</div></div>
+    <div><div class="stat-label">Best RPM</div><div class="stat-value" id="bestRpm">0</div></div>
+    <div><div class="stat-label">Longest</div><div class="stat-value" id="bestTime">0s</div></div>
+  </div>
+
+  <div class="instructions" id="instructions">Flick up or down anywhere — like scrolling a feed</div>
+  <div class="haptic-status" id="hapticStatus"></div>
+
+  <script>
+    // ---------- Themes ----------
+    const THEMES = {
+      emerald:  { stroke1:'#064e3b', stroke2:'#065f46', arm:['#34d399','#047857'], brg:['#6ee7b7','#059669'], ctr:['#10b981','#047857'], accent:'#10b981', accentLight:'#34d399', glow:'16,185,129', bg:'linear-gradient(135deg,#0f172a 0%,#064e3b 50%,#0f172a 100%)' },
+      purple:   { stroke1:'#312e81', stroke2:'#3730a3', arm:['#a78bfa','#6d28d9'], brg:['#c4b5fd','#7c3aed'], ctr:['#8b5cf6','#5b21b6'], accent:'#8b5cf6', accentLight:'#a78bfa', glow:'139,92,246',  bg:'linear-gradient(135deg,#0f172a 0%,#2e1065 50%,#0f172a 100%)' },
+      crimson:  { stroke1:'#7f1d1d', stroke2:'#991b1b', arm:['#f87171','#b91c1c'], brg:['#fca5a5','#dc2626'], ctr:['#ef4444','#991b1b'], accent:'#ef4444', accentLight:'#f87171', glow:'239,68,68',   bg:'linear-gradient(135deg,#0f172a 0%,#450a0a 50%,#0f172a 100%)' },
+      sapphire: { stroke1:'#1e3a8a', stroke2:'#1e40af', arm:['#60a5fa','#1d4ed8'], brg:['#93c5fd','#2563eb'], ctr:['#3b82f6','#1e40af'], accent:'#3b82f6', accentLight:'#60a5fa', glow:'59,130,246',  bg:'linear-gradient(135deg,#0f172a 0%,#172554 50%,#0f172a 100%)' }
+    };
+
+    // ---------- State ----------
+    let rotation = 0, velocity = 0, dragging = false;
+    let mode = 'scroll';           // 'scroll' or 'circle'
+    let arms = 3;
+    let theme = 'emerald';
+    let soundOn = false;
+    let lastAngle = 0, lastY = 0;
+    let recent = [];
+    let spinCount = 0, lastCounted = 0, lastHaptic = 0;
+    let spinStartTime = 0, currentSpinPeak = 0;
+    let best = { rpm: 0, time: 0 };
+    const hasHaptics = 'vibrate' in navigator;
+
+    // Load saved stats/settings
+    try {
+      const saved = JSON.parse(localStorage.getItem('fidget-data') || '{}');
+      if (saved.best) best = saved.best;
+      if (saved.spinCount) spinCount = saved.spinCount;
+      if (saved.theme && THEMES[saved.theme]) theme = saved.theme;
+      if (saved.arms) arms = saved.arms;
+      if (saved.mode) mode = saved.mode;
+    } catch (e) {}
+
+    function save() {
+      try { localStorage.setItem('fidget-data', JSON.stringify({ best, spinCount, theme, arms, mode })); } catch (e) {}
+    }
+
+    // ---------- Elements ----------
+    const $ = id => document.getElementById(id);
+    const container = $('spinnerContainer'), group = $('spinnerGroup'), glow = $('glow');
+
+    $('hapticStatus').textContent = hasHaptics ? '✓ Haptics enabled' : '✗ Haptics unavailable on this browser';
+
+    function vibrate(p) { if (hasHaptics) { try { navigator.vibrate(p); } catch (e) {} } }
+
+    // ---------- Sound (Web Audio whir) ----------
+    let audioCtx = null, osc = null, gain = null, noiseGain = null;
+    function initAudio() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        gain = audioCtx.createGain();
+        gain.gain.value = 0;
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start();
+      } catch (e) {}
+    }
+    function updateSound(speed) {
+      if (!audioCtx || !soundOn) { if (gain) gain.gain.value = 0; return; }
+      const s = Math.min(speed, 40);
+      gain.gain.setTargetAtTime(s > 0.3 ? Math.min(s / 200, 0.06) : 0, audioCtx.currentTime, 0.05);
+      osc.frequency.setTargetAtTime(40 + s * 6, audioCtx.currentTime, 0.05);
+    }
+
+    // ---------- Build spinner shape ----------
+    function buildSpinner() {
+      const t = THEMES[theme];
+      const angles = [];
+      for (let i = 0; i < arms; i++) angles.push((360 / arms) * i);
+      let svg = '';
+      for (const a of angles) {
+        svg += `<g transform="rotate(${a})">
+          <ellipse cx="45" cy="0" rx="38" ry="22" fill="url(#armG)" stroke="${t.stroke1}" stroke-width="2"/>
+          <circle cx="70" cy="0" r="18" fill="url(#bearingG)" stroke="${t.stroke2}" stroke-width="2"/>
+          <circle cx="70" cy="0" r="10" fill="${t.stroke1}"/>
+          <circle cx="70" cy="0" r="6" fill="#374151"/>
+        </g>`;
+      }
+      svg += `<circle cx="0" cy="0" r="24" fill="url(#centerG)" stroke="${t.stroke2}" stroke-width="3"/>
+        <circle cx="0" cy="0" r="14" fill="${t.stroke1}"/>
+        <circle cx="0" cy="0" r="8" fill="url(#innerG)"/>`;
+      group.innerHTML = svg;
+    }
+
+    function applyTheme() {
+      const t = THEMES[theme];
+      $('armS1').setAttribute('stop-color', t.arm[0]);  $('armS2').setAttribute('stop-color', t.arm[1]);
+      $('brgS1').setAttribute('stop-color', t.brg[0]);  $('brgS2').setAttribute('stop-color', t.brg[1]);
+      $('ctrS1').setAttribute('stop-color', t.ctr[0]);  $('ctrS2').setAttribute('stop-color', t.ctr[1]);
+      document.body.style.setProperty('--accent', t.accent);
+      document.body.style.setProperty('--accent-light', t.accentLight);
+      document.body.style.setProperty('--accent-dim', `rgba(${t.glow},0.25)`);
+      document.body.style.setProperty('--accent-glow', `rgba(${t.glow},0.5)`);
+      document.body.style.background = t.bg;
+      buildSpinner();
+    }
+
+    // ---------- Display ----------
+    function updateDisplay() {
+      const speed = Math.abs(velocity);
+      const rpm = Math.round(speed * 20);
+      const t = THEMES[theme];
+      group.setAttribute('transform', `rotate(${rotation})`);
+
+      const sl = $('speedLabel');
+      if (rpm < 10)      { sl.textContent = 'Stopped';  sl.className = 'speed-label'; }
+      else if (rpm < 50) { sl.textContent = 'Slow';     sl.className = 'speed-label slow'; }
+      else if (rpm < 150){ sl.textContent = 'Medium';   sl.className = 'speed-label slow'; }
+      else if (rpm < 300){ sl.textContent = 'Fast';     sl.className = 'speed-label fast'; }
+      else               { sl.textContent = 'BLAZING!'; sl.className = 'speed-label fast'; }
+
+      $('rpm').textContent = `${rpm} RPM`;
+      const gi = Math.min(rpm / 200, 1);
+      glow.style.background = `radial-gradient(circle, rgba(${t.glow}, ${gi * 0.5}) 0%, transparent 70%)`;
+      $('spinner').style.filter = rpm > 150 ? `drop-shadow(0 0 ${rpm/15}px rgba(${t.glow},0.6))` : 'none';
+      $('spinCount').textContent = spinCount.toLocaleString();
+      $('bestRpm').textContent = best.rpm.toLocaleString();
+      $('bestTime').textContent = best.time.toFixed(1) + 's';
+    }
+
+    // ---------- Physics loop ----------
+    function tick() {
+      if (!dragging && Math.abs(velocity) > 0.01) {
+        velocity *= 0.987;
+        rotation += velocity;
+
+        const rpm = Math.round(Math.abs(velocity) * 20);
+        if (rpm > best.rpm) { best.rpm = rpm; }
+        if (rpm > currentSpinPeak) currentSpinPeak = rpm;
+
+        const fullSpins = Math.floor(Math.abs(rotation - lastCounted) / 360);
+        if (fullSpins > 0) {
+          spinCount += fullSpins;
+          lastCounted += fullSpins * 360 * Math.sign(rotation - lastCounted);
+          vibrate(18);
+        }
+        const degSince = Math.abs(rotation - lastHaptic);
+        if (Math.abs(velocity) > 3 && degSince >= 30) { vibrate(3); lastHaptic = rotation; }
+
+        updateSound(Math.abs(velocity));
+        updateDisplay();
+      } else if (!dragging && velocity !== 0) {
+        // Spin just ended — record duration
+        velocity = 0;
+        if (spinStartTime) {
+          const dur = (performance.now() - spinStartTime) / 1000;
+          if (dur > best.time) best.time = dur;
+          spinStartTime = 0;
+          save();
+        }
+        updateSound(0);
+        updateDisplay();
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // ---------- Input ----------
+    function getAngle(x, y) {
+      const r = container.getBoundingClientRect();
+      return Math.atan2(y - (r.top + r.height/2), x - (r.left + r.width/2)) * 180 / Math.PI;
+    }
+
+    function start(x, y) {
+      initAudio();
+      dragging = true; recent = []; velocity = 0;
+      lastAngle = getAngle(x, y); lastY = y;
+      vibrate(10);
+    }
+
+    function move(x, y) {
+      if (!dragging) return;
+      let delta;
+      if (mode === 'circle') {
+        const a = getAngle(x, y);
+        delta = a - lastAngle;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        lastAngle = a;
+      } else {
+        // Scroll mode: vertical movement = rotation, like flicking a feed
+        delta = (lastY - y) * 0.9;   // swipe up = spin clockwise
+        lastY = y;
+      }
+      rotation += delta;
+      recent.push(delta);
+      if (recent.length > 5) recent.shift();
+      updateDisplay();
+    }
+
+    function end() {
+      if (!dragging) return;
+      dragging = false;
+      if (recent.length) {
+        const avg = recent.reduce((a,b) => a+b, 0) / recent.length;
+        velocity = avg * 1.5;
+        const s = Math.abs(velocity);
+        if (s > 0.5) { spinStartTime = performance.now(); currentSpinPeak = 0; }
+        if (s > 10) vibrate([5,30,5,30,10]);
+        else if (s > 5) vibrate([5,20,8]);
+      }
+    }
+
+    // Scroll mode: whole screen is the touch surface. Circle mode: spinner only.
+    function touchTarget(e) {
+      return mode === 'scroll' ? true : container.contains(e.target) || e.target === container;
+    }
+
+    document.body.addEventListener('mousedown', e => { if (e.target.closest('.chip')) return; if (touchTarget(e)) { e.preventDefault(); start(e.clientX, e.clientY); } });
+    window.addEventListener('mousemove', e => move(e.clientX, e.clientY));
+    window.addEventListener('mouseup', end);
+
+    document.body.addEventListener('touchstart', e => {
+      if (e.target.closest('.chip')) return;
+      if (touchTarget(e)) { e.preventDefault(); const t = e.touches[0]; start(t.clientX, t.clientY); }
+    }, { passive: false });
+    window.addEventListener('touchmove', e => {
+      if (dragging) { e.preventDefault(); const t = e.touches[0]; move(t.clientX, t.clientY); }
+    }, { passive: false });
+    window.addEventListener('touchend', e => { end(); }, { passive: false });
+
+    // ---------- Controls ----------
+    $('modeBar').addEventListener('click', e => {
+      const btn = e.target.closest('[data-mode]');
+      if (!btn) return;
+      mode = btn.dataset.mode;
+      document.querySelectorAll('#modeBar [data-mode]').forEach(b => b.classList.toggle('active', b === btn));
+      $('instructions').textContent = mode === 'scroll'
+        ? 'Flick up or down anywhere — like scrolling a feed'
+        : 'Drag the spinner in a circle and release';
+      vibrate(8); save();
+    });
+
+    $('soundChip').addEventListener('click', () => {
+      initAudio();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      soundOn = !soundOn;
+      $('soundChip').textContent = soundOn ? '🔊 Sound' : '🔇 Sound';
+      $('soundChip').classList.toggle('active', soundOn);
+      vibrate(8);
+    });
+
+    $('shapeBar').addEventListener('click', e => {
+      const btn = e.target.closest('[data-arms]');
+      if (!btn) return;
+      arms = parseInt(btn.dataset.arms);
+      document.querySelectorAll('#shapeBar .chip').forEach(b => b.classList.toggle('active', b === btn));
+      buildSpinner(); vibrate(8); save();
+    });
+
+    $('themeBar').addEventListener('click', e => {
+      const btn = e.target.closest('[data-theme]');
+      if (!btn) return;
+      theme = btn.dataset.theme;
+      document.querySelectorAll('#themeBar .chip').forEach(b => b.classList.toggle('active', b === btn));
+      applyTheme(); vibrate(8); save();
+    });
+
+    // ---------- Init ----------
+    document.querySelectorAll('#modeBar [data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    document.querySelectorAll('#shapeBar .chip').forEach(b => b.classList.toggle('active', parseInt(b.dataset.arms) === arms));
+    document.querySelectorAll('#themeBar .chip').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
+    $('instructions').textContent = mode === 'scroll'
+      ? 'Flick up or down anywhere — like scrolling a feed'
+      : 'Drag the spinner in a circle and release';
+    applyTheme();
+    updateDisplay();
+    requestAnimationFrame(tick);
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  </script>
+</body>
+</html>
