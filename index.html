@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#064e3b">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="manifest" href="manifest.json">
-  <title>Fidget Spinner</title>
+  <title>Fidget</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -33,6 +33,27 @@
     .spinner-container:active { cursor: grabbing; }
     .glow { position: absolute; inset: 0; border-radius: 50%; transform: scale(1.5); pointer-events: none; }
     .spinner-svg { width: 100%; height: 100%; pointer-events: none; }
+
+    /* Scroller (infinite empty feed) */
+    .scroller-container {
+      position: relative; width: 290px; height: 290px; overflow: hidden;
+      border-radius: 1.2rem; background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08); cursor: grab;
+      -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+      mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+    }
+    .scroller-container:active { cursor: grabbing; }
+    .scroller-strip { will-change: transform; pointer-events: none; }
+    .card {
+      display: flex; gap: 0.6rem; padding: 0.7rem; margin: 0.5rem 0.7rem;
+      background: rgba(255,255,255,0.06); border-radius: 0.8rem;
+      border: 1px solid rgba(255,255,255,0.05); height: 76px;
+    }
+    .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-dim, rgba(16,185,129,0.25)); flex-shrink: 0; }
+    .lines { flex: 1; padding-top: 3px; }
+    .line { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.12); margin-bottom: 8px; }
+    .line.accent { background: var(--accent-dim, rgba(16,185,129,0.25)); }
+
     .stats { display: flex; gap: 2rem; text-align: center; }
     .stat-label { color: rgba(255,255,255,0.4); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; }
     .stat-value { font-size: 1.15rem; font-family: ui-monospace, monospace; color: var(--accent-light, #6ee7b7); }
@@ -42,8 +63,8 @@
 </head>
 <body>
   <div class="top-bar" id="modeBar">
-    <button class="chip active" data-mode="scroll">📱 Scroll spin</button>
-    <button class="chip" data-mode="circle">🌀 Circle spin</button>
+    <button class="chip active" data-mode="scroll">📱 Scroller</button>
+    <button class="chip" data-mode="circle">🌀 Spinner</button>
     <button class="chip" id="soundChip">🔇 Sound</button>
   </div>
   <div class="top-bar" id="shapeBar">
@@ -64,7 +85,7 @@
     <div class="rpm" id="rpm">0 RPM</div>
   </div>
 
-  <div class="spinner-container" id="spinnerContainer">
+  <div class="spinner-container" id="spinnerContainer" style="display:none">
     <div class="glow" id="glow"></div>
     <svg class="spinner-svg" id="spinner" viewBox="-100 -100 200 200">
       <defs>
@@ -89,13 +110,17 @@
     </svg>
   </div>
 
+  <div class="scroller-container" id="scrollerContainer">
+    <div class="scroller-strip" id="scrollerStrip"></div>
+  </div>
+
   <div class="stats">
-    <div><div class="stat-label">Spins</div><div class="stat-value" id="spinCount">0</div></div>
+    <div><div class="stat-label" id="stat1Label">Posts</div><div class="stat-value" id="stat1Value">0</div></div>
     <div><div class="stat-label">Best RPM</div><div class="stat-value" id="bestRpm">0</div></div>
     <div><div class="stat-label">Longest</div><div class="stat-value" id="bestTime">0s</div></div>
   </div>
 
-  <div class="instructions" id="instructions">Flick up or down anywhere — like scrolling a feed</div>
+  <div class="instructions" id="instructions"></div>
   <div class="haptic-status" id="hapticStatus"></div>
 
   <script>
@@ -109,49 +134,48 @@
 
     // ---------- State ----------
     let rotation = 0, velocity = 0, dragging = false;
-    let mode = 'scroll';           // 'scroll' or 'circle'
-    let arms = 3;
-    let theme = 'emerald';
-    let soundOn = false;
+    let mode = 'scroll';           // 'scroll' (feed scroller) or 'circle' (spinner)
+    let arms = 3, theme = 'emerald', soundOn = false;
     let lastAngle = 0, lastY = 0;
     let recent = [];
-    let spinCount = 0, lastCounted = 0, lastHaptic = 0;
-    let spinStartTime = 0, currentSpinPeak = 0;
+    let spinCount = 0, postCount = 0, lastCounted = 0, lastHaptic = 0, lastCardTick = 0;
+    let spinStartTime = 0;
     let best = { rpm: 0, time: 0 };
     const hasHaptics = 'vibrate' in navigator;
+    const PX_PER_DEG = 2.2;        // scroll: degrees -> feed pixels
+    let stripH = 1, cardH = 92;
 
-    // Load saved stats/settings
     try {
       const saved = JSON.parse(localStorage.getItem('fidget-data') || '{}');
       if (saved.best) best = saved.best;
       if (saved.spinCount) spinCount = saved.spinCount;
+      if (saved.postCount) postCount = saved.postCount;
       if (saved.theme && THEMES[saved.theme]) theme = saved.theme;
       if (saved.arms) arms = saved.arms;
       if (saved.mode) mode = saved.mode;
     } catch (e) {}
 
     function save() {
-      try { localStorage.setItem('fidget-data', JSON.stringify({ best, spinCount, theme, arms, mode })); } catch (e) {}
+      try { localStorage.setItem('fidget-data', JSON.stringify({ best, spinCount, postCount, theme, arms, mode })); } catch (e) {}
     }
 
     // ---------- Elements ----------
     const $ = id => document.getElementById(id);
-    const container = $('spinnerContainer'), group = $('spinnerGroup'), glow = $('glow');
+    const spinBox = $('spinnerContainer'), scrollBox = $('scrollerContainer');
+    const group = $('spinnerGroup'), glow = $('glow'), strip = $('scrollerStrip');
 
     $('hapticStatus').textContent = hasHaptics ? '✓ Haptics enabled' : '✗ Haptics unavailable on this browser';
-
     function vibrate(p) { if (hasHaptics) { try { navigator.vibrate(p); } catch (e) {} } }
 
-    // ---------- Sound (Web Audio whir) ----------
-    let audioCtx = null, osc = null, gain = null, noiseGain = null;
+    // ---------- Sound ----------
+    let audioCtx = null, osc = null, gain = null;
     function initAudio() {
       if (audioCtx) return;
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         osc = audioCtx.createOscillator();
         osc.type = 'triangle';
-        gain = audioCtx.createGain();
-        gain.gain.value = 0;
+        gain = audioCtx.createGain(); gain.gain.value = 0;
         osc.connect(gain).connect(audioCtx.destination);
         osc.start();
       } catch (e) {}
@@ -163,14 +187,12 @@
       osc.frequency.setTargetAtTime(40 + s * 6, audioCtx.currentTime, 0.05);
     }
 
-    // ---------- Build spinner shape ----------
+    // ---------- Build spinner ----------
     function buildSpinner() {
       const t = THEMES[theme];
-      const angles = [];
-      for (let i = 0; i < arms; i++) angles.push((360 / arms) * i);
       let svg = '';
-      for (const a of angles) {
-        svg += `<g transform="rotate(${a})">
+      for (let i = 0; i < arms; i++) {
+        svg += `<g transform="rotate(${(360/arms)*i})">
           <ellipse cx="45" cy="0" rx="38" ry="22" fill="url(#armG)" stroke="${t.stroke1}" stroke-width="2"/>
           <circle cx="70" cy="0" r="18" fill="url(#bearingG)" stroke="${t.stroke2}" stroke-width="2"/>
           <circle cx="70" cy="0" r="10" fill="${t.stroke1}"/>
@@ -181,6 +203,36 @@
         <circle cx="0" cy="0" r="14" fill="${t.stroke1}"/>
         <circle cx="0" cy="0" r="8" fill="url(#innerG)"/>`;
       group.innerHTML = svg;
+    }
+
+    // ---------- Build scroller (infinite empty feed) ----------
+    function buildScroller() {
+      // 6 skeleton "posts" with varied line widths, duplicated for seamless wrap
+      const widths = [[85, 60, 40], [70, 90, 0], [55, 75, 35], [95, 45, 0], [65, 80, 50], [75, 55, 0]];
+      let cards = '';
+      for (const w of widths) {
+        cards += `<div class="card"><div class="avatar"></div><div class="lines">
+          <div class="line${Math.random() < 0 ? '' : ''}" style="width:${w[0]}%"></div>
+          <div class="line accent" style="width:${w[1]}%"></div>
+          ${w[2] ? `<div class="line" style="width:${w[2]}%"></div>` : ''}
+        </div></div>`;
+      }
+      strip.innerHTML = cards + cards;   // two copies = seamless loop
+      stripH = strip.scrollHeight / 2;
+      cardH = stripH / widths.length;
+    }
+
+    // ---------- Mode ----------
+    function applyMode() {
+      const isScroll = mode === 'scroll';
+      scrollBox.style.display = isScroll ? '' : 'none';
+      spinBox.style.display = isScroll ? 'none' : '';
+      $('shapeBar').style.display = isScroll ? 'none' : '';
+      $('stat1Label').textContent = isScroll ? 'Posts' : 'Spins';
+      $('instructions').textContent = isScroll
+        ? 'Flick through the endless empty feed — hold to stop'
+        : 'Drag the spinner in a circle and release';
+      document.querySelectorAll('#modeBar [data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     }
 
     function applyTheme() {
@@ -201,7 +253,17 @@
       const speed = Math.abs(velocity);
       const rpm = Math.round(speed * 20);
       const t = THEMES[theme];
-      group.setAttribute('transform', `rotate(${rotation})`);
+
+      if (mode === 'circle') {
+        group.setAttribute('transform', `rotate(${rotation})`);
+        const gi = Math.min(rpm / 200, 1);
+        glow.style.background = `radial-gradient(circle, rgba(${t.glow}, ${gi * 0.5}) 0%, transparent 70%)`;
+        $('spinner').style.filter = rpm > 150 ? `drop-shadow(0 0 ${rpm/15}px rgba(${t.glow},0.6))` : 'none';
+      } else {
+        const px = rotation * PX_PER_DEG;
+        const off = ((px % stripH) + stripH) % stripH;
+        strip.style.transform = `translateY(${-off}px)`;
+      }
 
       const sl = $('speedLabel');
       if (rpm < 10)      { sl.textContent = 'Stopped';  sl.className = 'speed-label'; }
@@ -211,10 +273,7 @@
       else               { sl.textContent = 'BLAZING!'; sl.className = 'speed-label fast'; }
 
       $('rpm').textContent = `${rpm} RPM`;
-      const gi = Math.min(rpm / 200, 1);
-      glow.style.background = `radial-gradient(circle, rgba(${t.glow}, ${gi * 0.5}) 0%, transparent 70%)`;
-      $('spinner').style.filter = rpm > 150 ? `drop-shadow(0 0 ${rpm/15}px rgba(${t.glow},0.6))` : 'none';
-      $('spinCount').textContent = spinCount.toLocaleString();
+      $('stat1Value').textContent = (mode === 'scroll' ? postCount : spinCount).toLocaleString();
       $('bestRpm').textContent = best.rpm.toLocaleString();
       $('bestTime').textContent = best.time.toFixed(1) + 's';
     }
@@ -226,22 +285,24 @@
         rotation += velocity;
 
         const rpm = Math.round(Math.abs(velocity) * 20);
-        if (rpm > best.rpm) { best.rpm = rpm; }
-        if (rpm > currentSpinPeak) currentSpinPeak = rpm;
+        if (rpm > best.rpm) best.rpm = rpm;
 
-        const fullSpins = Math.floor(Math.abs(rotation - lastCounted) / 360);
-        if (fullSpins > 0) {
-          spinCount += fullSpins;
-          lastCounted += fullSpins * 360 * Math.sign(rotation - lastCounted);
-          vibrate(18);
+        if (mode === 'circle') {
+          const fullSpins = Math.floor(Math.abs(rotation - lastCounted) / 360);
+          if (fullSpins > 0) {
+            spinCount += fullSpins;
+            lastCounted += fullSpins * 360 * Math.sign(rotation - lastCounted);
+            vibrate(18);
+          }
+          const degSince = Math.abs(rotation - lastHaptic);
+          if (Math.abs(velocity) > 3 && degSince >= 30) { vibrate(3); lastHaptic = rotation; }
+        } else {
+          countPosts(true);
         }
-        const degSince = Math.abs(rotation - lastHaptic);
-        if (Math.abs(velocity) > 3 && degSince >= 30) { vibrate(3); lastHaptic = rotation; }
 
         updateSound(Math.abs(velocity));
         updateDisplay();
       } else if (!dragging && velocity !== 0) {
-        // Spin just ended — record duration
         velocity = 0;
         if (spinStartTime) {
           const dur = (performance.now() - spinStartTime) / 1000;
@@ -255,15 +316,26 @@
       requestAnimationFrame(tick);
     }
 
+    // Post-passing detents for scroller (works while coasting and while dragging)
+    function countPosts(withHaptics) {
+      const cardIdx = Math.floor((rotation * PX_PER_DEG) / cardH);
+      if (cardIdx !== lastCardTick) {
+        postCount += Math.abs(cardIdx - lastCardTick);
+        lastCardTick = cardIdx;
+        if (withHaptics) vibrate(6);   // detent tick per post, like a ratchet
+      }
+    }
+
     // ---------- Input ----------
     function getAngle(x, y) {
-      const r = container.getBoundingClientRect();
+      const r = spinBox.getBoundingClientRect();
       return Math.atan2(y - (r.top + r.height/2), x - (r.left + r.width/2)) * 180 / Math.PI;
     }
 
     function start(x, y) {
       initAudio();
-      dragging = true; recent = []; velocity = 0;
+      dragging = true; recent = [];
+      if (mode === 'circle') velocity = 0;   // grabbing a spinner stops it
       lastAngle = getAngle(x, y); lastY = y;
       vibrate(10);
     }
@@ -278,13 +350,13 @@
         if (delta < -180) delta += 360;
         lastAngle = a;
       } else {
-        // Scroll mode: vertical movement = rotation, like flicking a feed
-        delta = (lastY - y) * 0.9;   // swipe up = spin clockwise
+        delta = (lastY - y) * 0.9;   // swipe up = feed moves up
         lastY = y;
       }
       rotation += delta;
       recent.push(delta);
       if (recent.length > 5) recent.shift();
+      if (mode === 'scroll') countPosts(true);
       updateDisplay();
     }
 
@@ -293,17 +365,24 @@
       dragging = false;
       if (recent.length) {
         const avg = recent.reduce((a,b) => a+b, 0) / recent.length;
-        velocity = avg * 1.5;
+        if (mode === 'scroll') {
+          if (Math.abs(avg) < 0.5) {
+            velocity = 0;            // held still = stop the feed
+          } else {
+            velocity = Math.max(-60, Math.min(60, velocity + avg * 1.8));   // flicks chain
+          }
+        } else {
+          velocity = avg * 1.5;
+        }
         const s = Math.abs(velocity);
-        if (s > 0.5) { spinStartTime = performance.now(); currentSpinPeak = 0; }
+        if (s > 0.5 && !spinStartTime) { spinStartTime = performance.now(); }
         if (s > 10) vibrate([5,30,5,30,10]);
         else if (s > 5) vibrate([5,20,8]);
       }
     }
 
-    // Scroll mode: whole screen is the touch surface. Circle mode: spinner only.
     function touchTarget(e) {
-      return mode === 'scroll' ? true : container.contains(e.target) || e.target === container;
+      return mode === 'scroll' ? true : spinBox.contains(e.target) || e.target === spinBox;
     }
 
     document.body.addEventListener('mousedown', e => { if (e.target.closest('.chip')) return; if (touchTarget(e)) { e.preventDefault(); start(e.clientX, e.clientY); } });
@@ -317,18 +396,17 @@
     window.addEventListener('touchmove', e => {
       if (dragging) { e.preventDefault(); const t = e.touches[0]; move(t.clientX, t.clientY); }
     }, { passive: false });
-    window.addEventListener('touchend', e => { end(); }, { passive: false });
+    window.addEventListener('touchend', () => { end(); }, { passive: false });
 
     // ---------- Controls ----------
     $('modeBar').addEventListener('click', e => {
       const btn = e.target.closest('[data-mode]');
       if (!btn) return;
       mode = btn.dataset.mode;
-      document.querySelectorAll('#modeBar [data-mode]').forEach(b => b.classList.toggle('active', b === btn));
-      $('instructions').textContent = mode === 'scroll'
-        ? 'Flick up or down anywhere — like scrolling a feed'
-        : 'Drag the spinner in a circle and release';
-      vibrate(8); save();
+      velocity = 0;                          // clean handoff between fidgets
+      lastCardTick = Math.floor((rotation * PX_PER_DEG) / cardH);
+      lastCounted = rotation;
+      applyMode(); updateDisplay(); vibrate(8); save();
     });
 
     $('soundChip').addEventListener('click', () => {
@@ -357,13 +435,12 @@
     });
 
     // ---------- Init ----------
-    document.querySelectorAll('#modeBar [data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     document.querySelectorAll('#shapeBar .chip').forEach(b => b.classList.toggle('active', parseInt(b.dataset.arms) === arms));
     document.querySelectorAll('#themeBar .chip').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
-    $('instructions').textContent = mode === 'scroll'
-      ? 'Flick up or down anywhere — like scrolling a feed'
-      : 'Drag the spinner in a circle and release';
+    buildScroller();
     applyTheme();
+    applyMode();
+    lastCardTick = 0;
     updateDisplay();
     requestAnimationFrame(tick);
 
